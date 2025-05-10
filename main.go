@@ -205,16 +205,15 @@ func createForm(item struct {
 	)
 }
 
-func loadPostmanCollection() (map[string]struct {
-	title string
-	intro string
-	form  fyne.CanvasObject
-}, error) {
-	forms := make(map[string]struct {
-		title string
-		intro string
-		form  fyne.CanvasObject
-	})
+type Form struct {
+	ID    string
+	Title string
+	Intro string
+	Form  fyne.CanvasObject
+}
+
+func loadPostmanCollection() ([]Form, error) {
+	var forms []Form
 
 	data, err := os.ReadFile(filepath.Join("data", "col.postman_collection.json"))
 	if err != nil {
@@ -247,15 +246,12 @@ func loadPostmanCollection() (map[string]struct {
 			// Create form with request info and variable substitution
 			form := createForm(item, vars)
 
-			forms[formID] = struct {
-				title string
-				intro string
-				form  fyne.CanvasObject
-			}{
-				title: item.Name,
-				intro: item.Request.Description,
-				form:  form,
-			}
+			forms = append(forms, Form{
+				ID:    formID,
+				Title: item.Name,
+				Intro: item.Request.Description,
+				Form:  form,
+			})
 			log.Info().Str("form_id", formID).Str("name", item.Name).Msg("Added form")
 		} else {
 			log.Warn().Str("name", item.Name).Msg("Skipping item: invalid URL path length")
@@ -263,8 +259,8 @@ func loadPostmanCollection() (map[string]struct {
 	}
 
 	log.Info().Int("count", len(forms)).Msg("Total forms loaded")
-	for id, form := range forms {
-		log.Info().Str("form_id", id).Str("title", form.title).Msg("Loaded form")
+	for _, form := range forms {
+		log.Info().Str("form_id", form.ID).Str("title", form.Title).Msg("Loaded form")
 	}
 
 	return forms, nil
@@ -313,12 +309,21 @@ func main() {
 		return
 	}
 
+	// Add filter entry
+	filterEntry := widget.NewEntry()
+	filterEntry.SetPlaceHolder("Filter by form name")
+	filterEntry.Resize(fyne.NewSize(200, 40)) // Set minimum size for filter
+
+	// Create filtered forms slice
+	filteredForms := make([]Form, len(forms))
+	copy(filteredForms, forms)
+
 	tree := &widget.Tree{
 		ChildUIDs: func(uid string) []string {
 			if uid == "" {
-				keys := make([]string, 0, len(forms))
-				for k := range forms {
-					keys = append(keys, k)
+				keys := make([]string, len(filteredForms))
+				for i, f := range filteredForms {
+					keys[i] = f.ID
 				}
 				log.Info().Strs("keys", keys).Msg("Tree ChildUIDs called for root")
 				return keys
@@ -340,30 +345,54 @@ func main() {
 				obj.(*widget.Label).SetText("Forms")
 				return
 			}
-			if f, ok := forms[uid]; ok {
-				log.Debug().Str("uid", uid).Str("title", f.title).Msg("Tree UpdateNode called")
-				obj.(*widget.Label).SetText(f.title)
+			for _, f := range filteredForms {
+				if f.ID == uid {
+					log.Debug().Str("uid", uid).Str("title", f.Title).Msg("Tree UpdateNode called")
+					obj.(*widget.Label).SetText(f.Title)
+					break
+				}
 			}
 		},
 		OnSelected: func(uid string) {
-			if f, ok := forms[uid]; ok {
-				log.Info().Str("uid", uid).Str("form", f.title).Msg("Tree OnSelected called")
-				a.Preferences().SetString(preferenceCurrentForm, uid)
-				setForm(f.form, f.title, f.intro)
+			for _, f := range filteredForms {
+				if f.ID == uid {
+					log.Info().Str("uid", uid).Str("form", f.Title).Msg("Tree OnSelected called")
+					a.Preferences().SetString(preferenceCurrentForm, uid)
+					setForm(f.Form, f.Title, f.Intro)
+					break
+				}
 			}
 		},
 	}
 
-	if len(forms) > 0 {
-		for k := range forms {
-			log.Info().Str("form_id", k).Msg("Selecting initial form")
-			tree.Select(k)
-			break
+	// Add filter functionality
+	filterEntry.OnChanged = func(input string) {
+		filteredForms = make([]Form, 0)
+		for _, f := range forms {
+			if strings.Contains(strings.ToLower(f.Title), strings.ToLower(input)) {
+				filteredForms = append(filteredForms, f)
+			}
 		}
+		tree.Refresh()
 	}
 
-	split := container.NewHSplit(tree, container.NewBorder(top, nil, nil, nil, content))
-	split.Offset = defaultSplitOffset
+	if len(forms) > 0 {
+		tree.Select(forms[0].ID)
+	}
+
+	// Create scrollable container for tree
+	treeScroll := container.NewVScroll(tree)
+	treeScroll.SetMinSize(fyne.NewSize(200, 400)) // Set minimum size for tree container
+
+	// Create left menu container with filter and tree
+	leftMenu := container.NewVBox(
+		filterEntry,
+		treeScroll,
+	)
+	leftMenu.Resize(fyne.NewSize(200, defaultWindowHeight)) // Set minimum size for left menu
+
+	split := container.NewHSplit(leftMenu, container.NewBorder(top, nil, nil, nil, content))
+	split.Offset = 0.2 // Adjust split offset for better proportions
 	w.SetContent(split)
 	w.Resize(fyne.NewSize(defaultWindowWidth, defaultWindowHeight))
 	log.Info().Msg("Application window created and ready")
