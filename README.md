@@ -116,8 +116,30 @@ go build -tags dev
 - End-to-end API test recorder
 - Cloud sync and team collaboration
 
-## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Test Coverage
+
+To check test coverage and generate a report, run:
+
+```bash
+make coverage
+```
+
+Example output:
+```
+$ make coverage
+mkdir -p docs
+go test -coverprofile=docs/coverage.out ./... && go tool cover -func=docs/coverage.out | grep total:
+	github.com/romanitalian/GHOSTman		coverage: 0.0% of statements
+ok  	github.com/romanitalian/GHOSTman/internal/collection	0.005s	coverage: 81.8% of statements
+ok  	github.com/romanitalian/GHOSTman/internal/httpclient	0.008s	coverage: 85.2% of statements
+	github.com/romanitalian/GHOSTman/internal/logging		coverage: 0.0% of statements
+	github.com/romanitalian/GHOSTman/internal/ui		coverage: 0.0% of statements
+total:									(statements)		19.3%
+HTML report: open docs/coverage.html
+go tool cover -html=docs/coverage.out -o docs/coverage.html
+```
+
+You can open `docs/coverage.html` in your browser for a detailed report.
 
 ## Contributing
 1. Fork the repository
@@ -125,3 +147,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 3. Commit your changes (`git commit -m 'feat: entity - add amazing feature'`)
 4. Push to the branch (`git push --force-with-lease origin feature/amazing-feature`)
 5. Open a Pull Request
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
