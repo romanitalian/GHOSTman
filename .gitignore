@@ -42,3 +42,5 @@ coverage/
 demo/
 demo.*
 changelog-*.md
+
+docs/coverage*
