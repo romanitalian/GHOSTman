@@ -53,6 +53,12 @@ deps: ## Download and update dependencies
 test: ## Run tests
 	go test -v ./...
 
+.PHONY: test-coverage
+test-coverage: ## Run tests with coverage
+	mkdir -p coverage
+	go test -v -coverprofile=coverage/coverage.out ./...
+	go tool cover -html=coverage/coverage.out -o coverage/coverage.html
+
 ##@ Aliases
 
 .PHONY: r
@@ -86,3 +92,7 @@ t: ## test App (command alias)
 .PHONY: c
 c: ## clean App (command alias)
 	@make clean
+
+.PHONY: tc
+tc: ## test coverage App (command alias)
+	@make test-coverage

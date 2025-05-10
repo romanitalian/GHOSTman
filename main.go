@@ -13,10 +13,13 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	"github.com/romanitalian/GHOSTman/models"
 )
 
 const (
@@ -39,38 +42,6 @@ var (
 	httpMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"}
 )
 
-// Cllns represents the structure of the collection JSON (Postman collection format)
-type Cllns struct {
-	Info struct {
-		Name string `json:"name"`
-	} `json:"info"`
-	Item []struct {
-		Name    string `json:"name"`
-		Request struct {
-			Method      string `json:"method"`
-			Description string `json:"description"`
-			Header      []struct {
-				Key   string `json:"key"`
-				Value string `json:"value"`
-			} `json:"header"`
-			Body struct {
-				Mode string `json:"mode"`
-				Raw  string `json:"raw"`
-			} `json:"body"`
-			URL struct {
-				Raw  string   `json:"raw"`
-				Host []string `json:"host"`
-				Path []string `json:"path"`
-			} `json:"url"`
-		} `json:"request"`
-	} `json:"item"`
-	Variable []struct {
-		Key   string `json:"key"`
-		Value string `json:"value"`
-		Type  string `json:"type"`
-	} `json:"variable"`
-}
-
 func substituteVariables(s string, vars map[string]string) string {
 	for k, v := range vars {
 		placeholder := "{{" + k + "}}"
@@ -79,37 +50,18 @@ func substituteVariables(s string, vars map[string]string) string {
 	return s
 }
 
-func createForm(item struct {
-	Name    string `json:"name"`
-	Request struct {
-		Method      string `json:"method"`
-		Description string `json:"description"`
-		Header      []struct {
-			Key   string `json:"key"`
-			Value string `json:"value"`
-		} `json:"header"`
-		Body struct {
-			Mode string `json:"mode"`
-			Raw  string `json:"raw"`
-		} `json:"body"`
-		URL struct {
-			Raw  string   `json:"raw"`
-			Host []string `json:"host"`
-			Path []string `json:"path"`
-		} `json:"url"`
-	} `json:"request"`
-}, vars map[string]string) fyne.CanvasObject {
+func createForm(item models.Item, vars map[string]string) fyne.CanvasObject {
 	// Create form fields
 	frm := &widget.Form{}
 
 	// Add request info fields
 	urlEntry := widget.NewEntry()
 	urlEntry.SetText(substituteVariables(item.Request.URL.Raw, vars))
-	frm.Append("URL", urlEntry)
+	frm.Append(models.LabelURL, urlEntry)
 
 	methodSelect := widget.NewSelect(httpMethods, func(value string) {})
 	methodSelect.SetSelected(item.Request.Method)
-	frm.Append("Method", methodSelect)
+	frm.Append(models.LabelMethod, methodSelect)
 
 	var headersText strings.Builder
 	for _, h := range item.Request.Header {
@@ -117,7 +69,7 @@ func createForm(item struct {
 	}
 	hdrsEntry := widget.NewMultiLineEntry()
 	hdrsEntry.SetText(headersText.String())
-	frm.Append("Headers", hdrsEntry)
+	frm.Append(models.LabelHeaders, hdrsEntry)
 
 	// Create body field with fixed height
 	bodyEntry := widget.NewMultiLineEntry()
@@ -127,7 +79,7 @@ func createForm(item struct {
 	lines := strings.Count(item.Request.Body.Raw, "\n") + 1
 	bodyEntry.SetMinRowsVisible(lines)
 
-	frm.Append("Body", bodyEntry)
+	frm.Append(models.LabelBody, bodyEntry)
 
 	// Create response field
 	textRS := widget.NewMultiLineEntry()
@@ -144,7 +96,7 @@ func createForm(item struct {
 	progressBar.Hide() // Hide initially
 
 	// Add submit button
-	submitBtn := widget.NewButton("Send", func() {
+	submitBtn := widget.NewButton(models.LabelSend, func() {
 		// Clear response field and show progress
 		textRS.SetText("")
 		progressBar.Show()
@@ -155,7 +107,7 @@ func createForm(item struct {
 		if err != nil {
 			progressBar.Hide()
 			progressBar.Refresh()
-			textRS.SetText(fmt.Sprintf("Error creating request: %v", err))
+			textRS.SetText(fmt.Sprintf(models.ErrCreatingRequest, err))
 			return
 		}
 
@@ -179,7 +131,7 @@ func createForm(item struct {
 				fyne.Do(func() {
 					progressBar.Hide()
 					progressBar.Refresh()
-					textRS.SetText(fmt.Sprintf("Error sending request: %v", err))
+					textRS.SetText(fmt.Sprintf(models.ErrSendingRequest, err))
 				})
 				return
 			}
@@ -191,7 +143,7 @@ func createForm(item struct {
 				fyne.Do(func() {
 					progressBar.Hide()
 					progressBar.Refresh()
-					textRS.SetText(fmt.Sprintf("Error reading response: %v", err))
+					textRS.SetText(fmt.Sprintf(models.ErrReadingResponse, err))
 				})
 				return
 			}
@@ -227,7 +179,7 @@ func createForm(item struct {
 	)
 
 	// Add response field after submit button
-	frm.Append("Response", containerRS)
+	frm.Append(models.LabelResponse, containerRS)
 
 	// Create vertical container with form
 	return container.NewVBox(
@@ -242,19 +194,19 @@ type Form struct {
 	Form  fyne.CanvasObject
 }
 
-func loadPostmanCollection() ([]Form, error) {
-	var forms []Form
+func loadPostmanCollection() ([]models.Form, error) {
+	var forms []models.Form
 
 	data, err := os.ReadFile(filepath.Join("data", "col.postman_collection.json"))
 	if err != nil {
-		log.Error().Err(err).Msg("error reading Postman collection")
-		return nil, fmt.Errorf("error reading Postman collection: %v", err)
+		log.Error().Err(err).Msg(models.LogLoadingForms)
+		return nil, fmt.Errorf(models.ErrReadingCollection, err)
 	}
 
-	var collection Cllns
+	var collection models.Collection
 	if err := json.Unmarshal(data, &collection); err != nil {
-		log.Error().Err(err).Msg("error parsing Postman collection")
-		return nil, fmt.Errorf("error parsing Postman collection: %v", err)
+		log.Error().Err(err).Msg(models.LogLoadingForms)
+		return nil, fmt.Errorf(models.ErrParsingCollection, err)
 	}
 
 	// Store variables in map
@@ -262,35 +214,35 @@ func loadPostmanCollection() ([]Form, error) {
 	for _, v := range collection.Variable {
 		vars[v.Key] = v.Value
 	}
-	log.Info().Fields(vars).Msg("Loaded Postman variables")
+	log.Info().Fields(vars).Msg(models.LogLoadedVariables)
 
-	log.Info().Int("count", len(collection.Item)).Msg("Total items in collection")
+	log.Info().Int("count", len(collection.Item)).Msg(models.LogTotalItems)
 
 	for i, item := range collection.Item {
-		log.Info().Int("idx", i+1).Str("name", item.Name).Msg("Processing item")
-		log.Info().Interface("url_path", item.Request.URL.Path).Msg("URL Path")
+		log.Info().Int("idx", i+1).Str("name", item.Name).Msg(models.LogProcessingItem)
+		log.Info().Interface("url_path", item.Request.URL.Path).Msg(models.LogURLPath)
 		if len(item.Request.URL.Path) >= minURLPathLength {
 			formID := item.Request.URL.Path[1]
-			log.Info().Str("form_id", formID).Msg("Form ID")
+			log.Info().Str("form_id", formID).Msg(models.LogFormID)
 
 			// Create form with request info and variable substitution
 			form := createForm(item, vars)
 
-			forms = append(forms, Form{
+			forms = append(forms, models.Form{
 				ID:    formID,
 				Title: item.Name,
 				Intro: item.Request.Description,
 				Form:  form,
 			})
-			log.Info().Str("form_id", formID).Str("name", item.Name).Msg("Added form")
+			log.Info().Str("form_id", formID).Str("name", item.Name).Msg(models.LogAddedForm)
 		} else {
-			log.Warn().Str("name", item.Name).Msg("Skipping item: invalid URL path length")
+			log.Warn().Str("name", item.Name).Msg(models.LogSkippingItem)
 		}
 	}
 
-	log.Info().Int("count", len(forms)).Msg("Total forms loaded")
+	log.Info().Int("count", len(forms)).Msg(models.LogTotalForms)
 	for _, form := range forms {
-		log.Info().Str("form_id", form.ID).Str("title", form.Title).Msg("Loaded form")
+		log.Info().Str("form_id", form.ID).Str("title", form.Title).Msg(models.LogLoadedForm)
 	}
 
 	return forms, nil
@@ -312,7 +264,7 @@ func main() {
 		})
 	}
 
-	log.Info().Msg("Starting application...")
+	log.Info().Msg(models.LogStartingApp)
 
 	a := app.NewWithID(appID)
 	w := a.NewWindow(appTitle)
@@ -323,10 +275,24 @@ func main() {
 	intro := widget.NewLabel("Form description goes here")
 	intro.Wrapping = fyne.TextWrapWord
 
-	top := container.NewVBox(title, widget.NewSeparator(), intro)
+	// Theme switcher
+	themeSelect := widget.NewSelect([]string{models.ThemeLight, models.ThemeDark}, func(value string) {
+		if value == models.ThemeDark {
+			a.Settings().SetTheme(theme.DarkTheme())
+		} else {
+			a.Settings().SetTheme(theme.LightTheme())
+		}
+	})
+	themeSelect.SetSelected(models.ThemeLight)
+	top := container.NewVBox(
+		themeSelect,
+		title,
+		widget.NewSeparator(),
+		intro,
+	)
 
 	setForm := func(form fyne.CanvasObject, formTitle string, formIntro string) {
-		log.Info().Str("form_title", formTitle).Msg("Setting form")
+		log.Info().Str("form_title", formTitle).Msg(models.LogSettingForm)
 		title.SetText(formTitle)
 		intro.SetText(formIntro)
 		content.Objects = []fyne.CanvasObject{form}
@@ -335,17 +301,17 @@ func main() {
 
 	forms, err := loadPostmanCollection()
 	if err != nil {
-		log.Error().Err(err).Msg("Error loading forms")
+		log.Error().Err(err).Msg(models.LogLoadingForms)
 		return
 	}
 
 	// Add filter entry
 	filterEntry := widget.NewEntry()
-	filterEntry.SetPlaceHolder("Filter by form name")
+	filterEntry.SetPlaceHolder(models.FilterPlaceholder)
 	filterEntry.Resize(fyne.NewSize(200, 40)) // Set minimum size for filter
 
 	// Create filtered forms slice
-	filteredForms := make([]Form, len(forms))
+	filteredForms := make([]models.Form, len(forms))
 	copy(filteredForms, forms)
 
 	tree := &widget.Tree{
@@ -355,29 +321,29 @@ func main() {
 				for i, f := range filteredForms {
 					keys[i] = f.ID
 				}
-				log.Info().Strs("keys", keys).Msg("Tree ChildUIDs called for root")
+				log.Info().Strs("keys", keys).Msg(models.LogTreeChildUIDs)
 				return keys
 			}
 			return []string{}
 		},
 		IsBranch: func(uid string) bool {
 			isRoot := uid == ""
-			log.Debug().Str("uid", uid).Bool("is_root", isRoot).Msg("Tree IsBranch called")
+			log.Debug().Str("uid", uid).Bool("is_root", isRoot).Msg(models.LogTreeIsBranch)
 			return isRoot
 		},
 		CreateNode: func(branch bool) fyne.CanvasObject {
-			log.Debug().Bool("branch", branch).Msg("Tree CreateNode called")
-			return widget.NewLabel("Form")
+			log.Debug().Bool("branch", branch).Msg(models.LogTreeCreateNode)
+			return widget.NewLabel(models.LabelForm)
 		},
 		UpdateNode: func(uid string, branch bool, obj fyne.CanvasObject) {
 			if uid == "" {
-				log.Debug().Msg("Tree UpdateNode called for root")
-				obj.(*widget.Label).SetText("Forms")
+				log.Debug().Msg(models.LogTreeUpdateNodeRoot)
+				obj.(*widget.Label).SetText(models.LabelForms)
 				return
 			}
 			for _, f := range filteredForms {
 				if f.ID == uid {
-					log.Debug().Str("uid", uid).Str("title", f.Title).Msg("Tree UpdateNode called")
+					log.Debug().Str("uid", uid).Str("title", f.Title).Msg(models.LogTreeUpdateNode)
 					obj.(*widget.Label).SetText(f.Title)
 					break
 				}
@@ -386,7 +352,7 @@ func main() {
 		OnSelected: func(uid string) {
 			for _, f := range filteredForms {
 				if f.ID == uid {
-					log.Info().Str("uid", uid).Str("form", f.Title).Msg("Tree OnSelected called")
+					log.Info().Str("uid", uid).Str("form", f.Title).Msg(models.LogTreeSelected)
 					a.Preferences().SetString(preferenceCurrentForm, uid)
 					setForm(f.Form, f.Title, f.Intro)
 					break
@@ -397,7 +363,7 @@ func main() {
 
 	// Add filter functionality
 	filterEntry.OnChanged = func(input string) {
-		filteredForms = make([]Form, 0)
+		filteredForms = make([]models.Form, 0)
 		for _, f := range forms {
 			if strings.Contains(strings.ToLower(f.Title), strings.ToLower(input)) {
 				filteredForms = append(filteredForms, f)
@@ -425,6 +391,6 @@ func main() {
 	split.Offset = 0.2 // Adjust split offset for better proportions
 	w.SetContent(split)
 	w.Resize(fyne.NewSize(defaultWindowWidth, defaultWindowHeight))
-	log.Info().Msg("Application window created and ready")
+	log.Info().Msg(models.LogWindowReady)
 	w.ShowAndRun()
 }
