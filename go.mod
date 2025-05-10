@@ -1,4 +1,4 @@
-module github.com/romanitalian/GHOSTman
+module github.com/romanitalian/GHOSTman/v2
 
 go 1.24
 

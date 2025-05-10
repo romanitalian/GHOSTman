@@ -53,12 +53,11 @@ deps: ## Download and update dependencies
 test: ## Run tests
 	go test -v ./...
 
-.PHONY: coverage
-coverage: ## Run tests with coverage and show percentage
-	mkdir -p docs
-	go test -coverprofile=docs/coverage.out ./... && go tool cover -func=docs/coverage.out | grep total:
-	@echo "HTML report: open docs/coverage.html"
-	go tool cover -html=docs/coverage.out -o docs/coverage.html
+.PHONY: test-coverage
+test-coverage: ## Run tests with coverage
+	mkdir -p coverage
+	go test -v -coverprofile=coverage/coverage.out ./...
+	go tool cover -html=coverage/coverage.out -o coverage/coverage.html
 
 ##@ Aliases
 
@@ -94,6 +93,6 @@ t: ## test App (command alias)
 c: ## clean App (command alias)
 	@make clean
 
-.PHONY: cov
-cov: ## Test coverage (command alias)
-	@make coverage
+.PHONY: tc
+tc: ## test coverage App (command alias)
+	@make test-coverage

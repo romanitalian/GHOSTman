@@ -9,12 +9,19 @@ A GUI application for executing HTTP commands, built with Go and Fyne framework.
 - Command filtering and search
 - HTTP request execution with customizable headers and methods
 - Response visualization
-- Dark/Light theme support
+- Dark/Light theme support (switcher in the top panel)
 - Cross-platform (Windows, macOS, Linux)
 
 ## Screenshots
 
-![GHOSTman Screenshot](./docs/screenshot-2025-05-10_14-25-10.png)
+- Theme: `Ligth`
+
+![GHOSTman Screenshot](./docs/screenshot-GHOSTman-v1.0.0-theme-light.png)
+
+
+- Theme: `Dark`
+
+![GHOSTman Screenshot](./docs/screenshot-GHOSTman-v1.0.0-theme-dark.png)
 
 ## Prerequisites
 - Go 1.21 or higher
@@ -79,8 +86,9 @@ Create a Postman Collection file (e.g., `collection.json`) in the `data` directo
 ### Running Commands
 1. Launch the application
 2. Select a command from the left panel
-3. Click "Execute" or press Enter
-4. View the response in the right panel
+3. (Optional) Switch between Light and Dark theme using the selector at the top
+4. Click "Execute" or press Enter
+5. View the response in the right panel
 
 ## Development
 
@@ -92,6 +100,9 @@ go mod download
 # Run tests
 go test ./...
 
+# Run tests with coverage
+make test-coverage  # or make tc for short
+
 # Build for development
 go build -tags dev
 ```
@@ -100,6 +111,7 @@ go build -tags dev
 ```
 .
 ├── data/          # Postman Collection files
+├── coverage/      # Test coverage reports
 ├── main.go        # Application entry point
 ├── Makefile       # Build and development commands
 ├── go.mod         # Go module definition
