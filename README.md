@@ -14,7 +14,7 @@ A GUI application for executing HTTP commands, built with Go and Fyne framework.
 
 ## Screenshots
 
-![GHOSTman Screenshot](./docs/screenshot-2025-05-10-14-25-10.png)
+![GHOSTman Screenshot](./docs/screenshot-2025-05-10_14-25-10.png)
 
 ## Prerequisites
 - Go 1.21 or higher
