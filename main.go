@@ -132,22 +132,29 @@ func createForm(item struct {
 	// Create response field
 	textRS := widget.NewMultiLineEntry()
 	textRS.Wrapping = fyne.TextWrapWord
-	textRS.Disable() // Make it read-only
 	textRS.TextStyle = fyne.TextStyle{
 		Bold:      true,
 		Monospace: true,
 	}
 	textRS.Resize(fyne.NewSize(200, 200))
-	textRS.SetMinRowsVisible(10)
+	textRS.SetMinRowsVisible(25)
+
+	// Create progress bar
+	progressBar := widget.NewProgressBarInfinite()
+	progressBar.Hide() // Hide initially
 
 	// Add submit button
 	submitBtn := widget.NewButton("Send", func() {
-		// Clear response field
+		// Clear response field and show progress
 		textRS.SetText("")
+		progressBar.Show()
+		progressBar.Refresh()
 
 		// Create request
 		rq, err := http.NewRequest(methodSelect.Selected, urlEntry.Text, bytes.NewBufferString(bodyEntry.Text))
 		if err != nil {
+			progressBar.Hide()
+			progressBar.Refresh()
 			textRS.SetText(fmt.Sprintf("Error creating request: %v", err))
 			return
 		}
@@ -164,40 +171,63 @@ func createForm(item struct {
 			}
 		}
 
-		// Send request
-		client := &http.Client{}
-		resp, err := client.Do(rq)
-		if err != nil {
-			textRS.SetText(fmt.Sprintf("Error sending request: %v", err))
-			return
-		}
-		defer resp.Body.Close()
+		// Send request in goroutine
+		go func() {
+			client := &http.Client{}
+			resp, err := client.Do(rq)
+			if err != nil {
+				fyne.Do(func() {
+					progressBar.Hide()
+					progressBar.Refresh()
+					textRS.SetText(fmt.Sprintf("Error sending request: %v", err))
+				})
+				return
+			}
+			defer resp.Body.Close()
 
-		// Read response
-		bodyRS, err := io.ReadAll(resp.Body)
-		if err != nil {
-			textRS.SetText(fmt.Sprintf("Error reading response: %v", err))
-			return
-		}
+			// Read response
+			bodyRS, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fyne.Do(func() {
+					progressBar.Hide()
+					progressBar.Refresh()
+					textRS.SetText(fmt.Sprintf("Error reading response: %v", err))
+				})
+				return
+			}
 
-		// Format response
-		var prettyJSON bytes.Buffer
-		if err := json.Indent(&prettyJSON, bodyRS, "", "    "); err != nil {
-			textRS.SetText(string(bodyRS))
-		} else {
-			textRS.SetText(prettyJSON.String())
-		}
+			// Format response
+			var prettyJSON bytes.Buffer
+			if err := json.Indent(&prettyJSON, bodyRS, "", "    "); err != nil {
+				fyne.Do(func() {
+					textRS.SetText(string(bodyRS))
+					progressBar.Hide()
+					progressBar.Refresh()
+				})
+				return
+			}
+
+			// Update response and hide progress
+			fyne.Do(func() {
+				textRS.SetText(prettyJSON.String())
+				progressBar.Hide()
+				progressBar.Refresh()
+			})
+		}()
 	})
+
 	frm.Append("", submitBtn)
+
+	frm.Append("", progressBar)
 
 	// Create response container
 	containerRS := container.NewVBox(
-		widget.NewLabel("Response"),
+		progressBar,
 		textRS,
 	)
 
 	// Add response field after submit button
-	frm.Append("", containerRS)
+	frm.Append("Response", containerRS)
 
 	// Create vertical container with form
 	return container.NewVBox(
