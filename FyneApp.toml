@@ -1,0 +1,33 @@
+[Details]
+  Icon = "Icon.png"
+  Name = "GHOSTman"
+  ID = "com.github.romanitalian.GHOSTman"
+  Version = "2.0.1"
+  Build = 1
+
+[Source]
+  Repo = "https://github.com/romanitalian/GHOSTman"
+
+[Development]
+  HelperText = "This binary was built with debug symbols"
+
+[Release]
+  HelperText = "This binary was built without debug symbols"
+
+[LinuxAndBSD]
+  GenericName = "GHOSTman"
+  Categories = ["Development", "Network", "WebDevelopment"]
+  Comment = "A GUI client for testing and managing API requests"
+  Keywords = ["api", "http", "client", "testing", "development", "rest"]
+
+[Windows]
+  GenericName = "GHOSTman"
+  Categories = ["Development", "Network", "WebDevelopment"]
+  Comment = "A GUI client for testing and managing API requests"
+  Keywords = ["api", "http", "client", "testing", "development", "rest"]
+
+[macOS]
+  GenericName = "GHOSTman"
+  Categories = ["Development", "Network", "WebDevelopment"]
+  Comment = "A GUI client for testing and managing API requests"
+  Keywords = ["api", "http", "client", "testing", "development", "rest"]
