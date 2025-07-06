@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,6 +37,9 @@ const (
 	appID    = "com.github.romanitalian.ghostman"
 	appTitle = "GHOSTman"
 )
+
+//go:embed FyneApp.toml
+var _ []byte
 
 var (
 	topWindow   fyne.Window
