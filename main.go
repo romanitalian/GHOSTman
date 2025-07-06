@@ -8,12 +8,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -24,12 +25,13 @@ import (
 )
 
 const (
-	preferenceCurrentForm = "currentForm"
-	minURLPathLength      = 2
-	defaultSplitOffset    = 0.2
-	responseHeightRatio   = 0.3
-	defaultWindowWidth    = 1024
-	defaultWindowHeight   = 768
+	preferenceCurrentForm    = "currentForm"
+	preferenceCollectionPath = "collectionPath"
+	minURLPathLength         = 2
+	defaultSplitOffset       = 0.2
+	responseHeightRatio      = 0.3
+	defaultWindowWidth       = 1024
+	defaultWindowHeight      = 768
 
 	logLevel      = zerolog.WarnLevel
 	logFormatJSON = true
@@ -198,10 +200,10 @@ type Form struct {
 	Form  fyne.CanvasObject
 }
 
-func loadPostmanCollection() ([]models.Form, error) {
+func loadPostmanCollection(filePath string) ([]models.Form, error) {
 	var forms []models.Form
 
-	data, err := os.ReadFile(filepath.Join("data", "col.postman_collection.json"))
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		log.Error().Err(err).Msg(models.LogLoadingForms)
 		return nil, fmt.Errorf(models.ErrReadingCollection, err)
@@ -274,26 +276,15 @@ func main() {
 	w := a.NewWindow(appTitle)
 	topWindow = w
 
+	var forms []models.Form
+	var filteredForms []models.Form
+	var tree *widget.Tree
+	var filterEntry *widget.Entry
+
 	content := container.NewStack()
 	title := widget.NewLabel("Form Title")
 	intro := widget.NewLabel("Form description goes here")
 	intro.Wrapping = fyne.TextWrapWord
-
-	// Theme switcher
-	themeSelect := widget.NewSelect([]string{models.ThemeLight, models.ThemeDark}, func(value string) {
-		if value == models.ThemeDark {
-			a.Settings().SetTheme(theme.DarkTheme())
-		} else {
-			a.Settings().SetTheme(theme.LightTheme())
-		}
-	})
-	themeSelect.SetSelected(models.ThemeLight)
-	top := container.NewVBox(
-		themeSelect,
-		title,
-		widget.NewSeparator(),
-		intro,
-	)
 
 	setForm := func(form fyne.CanvasObject, formTitle string, formIntro string) {
 		log.Info().Str("form_title", formTitle).Msg(models.LogSettingForm)
@@ -303,22 +294,22 @@ func main() {
 		content.Refresh()
 	}
 
-	forms, err := loadPostmanCollection()
-	if err != nil {
-		log.Error().Err(err).Msg(models.LogLoadingForms)
-		return
+	// Load initial collection from preferences
+	collectionPath := a.Preferences().String(preferenceCollectionPath)
+	if collectionPath != "" {
+		var err error
+		forms, err = loadPostmanCollection(collectionPath)
+		if err != nil {
+			log.Error().Err(err).Str("path", collectionPath).Msg("Failed to load collection from saved path")
+			forms = []models.Form{} // Start with empty if load fails
+		}
 	}
 
-	// Add filter entry
-	filterEntry := widget.NewEntry()
-	filterEntry.SetPlaceHolder(models.FilterPlaceholder)
-	filterEntry.Resize(fyne.NewSize(200, 40)) // Set minimum size for filter
-
 	// Create filtered forms slice
-	filteredForms := make([]models.Form, len(forms))
+	filteredForms = make([]models.Form, len(forms))
 	copy(filteredForms, forms)
 
-	tree := &widget.Tree{
+	tree = &widget.Tree{
 		ChildUIDs: func(uid string) []string {
 			if uid == "" {
 				keys := make([]string, len(filteredForms))
@@ -365,7 +356,9 @@ func main() {
 		},
 	}
 
-	// Add filter functionality
+	filterEntry = widget.NewEntry()
+	filterEntry.SetPlaceHolder(models.FilterPlaceholder)
+	filterEntry.Resize(fyne.NewSize(200, 40)) // Set minimum size for filter
 	filterEntry.OnChanged = func(input string) {
 		filteredForms = make([]models.Form, 0)
 		for _, f := range forms {
@@ -376,8 +369,76 @@ func main() {
 		tree.Refresh()
 	}
 
+	// Theme switcher
+	themeSelect := widget.NewSelect([]string{models.ThemeLight, models.ThemeDark}, func(value string) {
+		if value == models.ThemeDark {
+			a.Settings().SetTheme(theme.DarkTheme())
+		} else {
+			a.Settings().SetTheme(theme.LightTheme())
+		}
+	})
+	themeSelect.SetSelected(models.ThemeLight)
+
+	// Кнопка для добавления коллекции
+	addCollectionBtn := widget.NewButton("Добавить коллекцию", func() {
+		fileDialog := dialog.NewFileOpen(
+			func(reader fyne.URIReadCloser, err error) {
+				if err != nil || reader == nil {
+					return
+				}
+				defer reader.Close()
+
+				filePath := reader.URI().Path()
+				newForms, loadErr := loadPostmanCollection(filePath)
+				if loadErr != nil {
+					dialog.ShowError(fmt.Errorf("не удалось загрузить коллекцию: %w", loadErr), w)
+					return
+				}
+
+				forms = newForms
+				filterEntry.SetText("")
+				filteredForms = make([]models.Form, len(forms))
+				copy(filteredForms, forms)
+				tree.Refresh()
+				if len(forms) > 0 {
+					tree.Select(forms[0].ID)
+				}
+
+				a.Preferences().SetString(preferenceCollectionPath, filePath)
+			},
+			w,
+		)
+		fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
+		fileDialog.Show()
+	})
+
+	top := container.NewVBox(
+		themeSelect,
+		addCollectionBtn,
+		title,
+		widget.NewSeparator(),
+		intro,
+	)
+
 	if len(forms) > 0 {
-		tree.Select(forms[0].ID)
+		currentFormID := a.Preferences().String(preferenceCurrentForm)
+		if currentFormID != "" {
+			// check if form exists
+			found := false
+			for _, f := range forms {
+				if f.ID == currentFormID {
+					found = true
+					break
+				}
+			}
+			if found {
+				tree.Select(currentFormID)
+			} else {
+				tree.Select(forms[0].ID)
+			}
+		} else {
+			tree.Select(forms[0].ID)
+		}
 	}
 
 	// Create scrollable container for tree
