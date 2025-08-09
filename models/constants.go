@@ -32,6 +32,7 @@ const (
 	ErrReadingResponse   = "Error reading response: %v"
 	ErrRequestCancelled  = "Запрос отменен"
 	ErrRequestInProgress = "Запрос выполняется %s 🚀"
+	ErrNoForms           = "No forms found in collection"
 )
 
 // Log messages

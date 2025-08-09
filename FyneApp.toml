@@ -2,7 +2,7 @@
   Icon = "Icon.png"
   Name = "GHOSTman"
   ID = "com.github.romanitalian.GHOSTman"
-  Version = "2.0.1"
+  Version = "2.1.0"
   Build = 1
 
 [Source]

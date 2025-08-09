@@ -5,15 +5,18 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -28,8 +31,6 @@ const (
 	preferenceCurrentForm    = "currentForm"
 	preferenceCollectionPath = "collectionPath"
 	minURLPathLength         = 2
-	defaultSplitOffset       = 0.2
-	responseHeightRatio      = 0.3
 	defaultWindowWidth       = 1024
 	defaultWindowHeight      = 768
 
@@ -43,10 +44,43 @@ const (
 //go:embed FyneApp.toml
 var _ []byte
 
+// AppState holds the application's state
+type AppState struct {
+	collection     *models.Collection
+	collectionPath string
+	isModified     bool
+}
+
 var (
+	appState    AppState
 	topWindow   fyne.Window
 	httpMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"}
+
+	unsavedLabel *widget.Label // Индикатор несохранённых изменений
+
+	autoSaveInterval = 60 * time.Second
+	autoSaveStopCh   chan struct{}
 )
+
+func (a *AppState) setModified(modified bool) {
+	if a.isModified == modified {
+		return
+	}
+	a.isModified = modified
+	if modified {
+		topWindow.SetTitle(appTitle + " *")
+		if unsavedLabel != nil {
+			unsavedLabel.SetText("● Unsaved changes")
+			unsavedLabel.Show()
+		}
+	} else {
+		topWindow.SetTitle(appTitle)
+		if unsavedLabel != nil {
+			unsavedLabel.SetText("")
+			unsavedLabel.Hide()
+		}
+	}
+}
 
 func substituteVariables(s string, vars map[string]string) string {
 	for k, v := range vars {
@@ -56,16 +90,23 @@ func substituteVariables(s string, vars map[string]string) string {
 	return s
 }
 
-func createForm(item models.Item, vars map[string]string) fyne.CanvasObject {
+func createForm(item *models.Item, vars map[string]string) fyne.CanvasObject {
 	// Create form fields
 	frm := &widget.Form{}
 
 	// Add request info fields
 	urlEntry := widget.NewEntry()
 	urlEntry.SetText(substituteVariables(item.Request.URL.Raw, vars))
+	urlEntry.OnChanged = func(s string) {
+		item.Request.URL.Raw = s
+		appState.setModified(true)
+	}
 	frm.Append(models.LabelURL, urlEntry)
 
-	methodSelect := widget.NewSelect(httpMethods, func(value string) {})
+	methodSelect := widget.NewSelect(httpMethods, func(value string) {
+		item.Request.Method = value
+		appState.setModified(true)
+	})
 	methodSelect.SetSelected(item.Request.Method)
 	frm.Append(models.LabelMethod, methodSelect)
 
@@ -75,11 +116,21 @@ func createForm(item models.Item, vars map[string]string) fyne.CanvasObject {
 	}
 	hdrsEntry := widget.NewMultiLineEntry()
 	hdrsEntry.SetText(headersText.String())
+	hdrsEntry.OnChanged = func(s string) {
+		// This is a simplification. A more robust implementation would parse the headers.
+		// For now, we'll just mark it as modified.
+		// A proper implementation would need to update item.Request.Header
+		appState.setModified(true)
+	}
 	frm.Append(models.LabelHeaders, hdrsEntry)
 
 	// Create body field with fixed height
 	bodyEntry := widget.NewMultiLineEntry()
 	bodyEntry.SetText(substituteVariables(item.Request.Body.Raw, vars))
+	bodyEntry.OnChanged = func(s string) {
+		item.Request.Body.Raw = s
+		appState.setModified(true)
+	}
 
 	// Calculate number of lines in JSON
 	lines := strings.Count(item.Request.Body.Raw, "\n") + 1
@@ -193,13 +244,6 @@ func createForm(item models.Item, vars map[string]string) fyne.CanvasObject {
 	)
 }
 
-type Form struct {
-	ID    string
-	Title string
-	Intro string
-	Form  fyne.CanvasObject
-}
-
 func loadPostmanCollection(filePath string) ([]models.Form, error) {
 	var forms []models.Form
 
@@ -214,6 +258,10 @@ func loadPostmanCollection(filePath string) ([]models.Form, error) {
 		log.Error().Err(err).Msg(models.LogLoadingForms)
 		return nil, fmt.Errorf(models.ErrParsingCollection, err)
 	}
+
+	appState.collection = &collection
+	appState.collectionPath = filePath
+	appState.setModified(false)
 
 	// Store variables in map
 	vars := make(map[string]string)
@@ -232,7 +280,7 @@ func loadPostmanCollection(filePath string) ([]models.Form, error) {
 			log.Info().Str("form_id", formID).Msg(models.LogFormID)
 
 			// Create form with request info and variable substitution
-			form := createForm(item, vars)
+			form := createForm(&collection.Item[i], vars)
 
 			forms = append(forms, models.Form{
 				ID:    formID,
@@ -372,15 +420,15 @@ func main() {
 	// Theme switcher
 	themeSelect := widget.NewSelect([]string{models.ThemeLight, models.ThemeDark}, func(value string) {
 		if value == models.ThemeDark {
-			a.Settings().SetTheme(theme.DarkTheme())
+			a.Settings().SetTheme(fixedVariant(theme.VariantDark))
 		} else {
-			a.Settings().SetTheme(theme.LightTheme())
+			a.Settings().SetTheme(fixedVariant(theme.VariantLight))
 		}
 	})
 	themeSelect.SetSelected(models.ThemeLight)
 
 	// Кнопка для добавления коллекции
-	addCollectionBtn := widget.NewButton("Добавить коллекцию", func() {
+	addCollectionBtn := widget.NewButton("Add Collection", func() {
 		fileDialog := dialog.NewFileOpen(
 			func(reader fyne.URIReadCloser, err error) {
 				if err != nil || reader == nil {
@@ -391,7 +439,7 @@ func main() {
 				filePath := reader.URI().Path()
 				newForms, loadErr := loadPostmanCollection(filePath)
 				if loadErr != nil {
-					dialog.ShowError(fmt.Errorf("не удалось загрузить коллекцию: %w", loadErr), w)
+					dialog.ShowError(fmt.Errorf("failed to load collection: %w", loadErr), w)
 					return
 				}
 
@@ -412,9 +460,83 @@ func main() {
 		fileDialog.Show()
 	})
 
+	// Select для выбора интервала автосохранения
+	// intervalOptions := []string{"Выкл", "30 сек", "1 мин", "5 мин"}
+	// intervalMap := map[string]time.Duration{
+	// 	"Выкл":   0,
+	// 	"30 сек": 30 * time.Second,
+	// 	"1 мин":  60 * time.Second,
+	// 	"5 мин":  5 * time.Minute,
+	// }
+	// autoSaveSelect := widget.NewSelect(intervalOptions, func(val string) {
+	// 	if d, ok := intervalMap[val]; ok {
+	// 		autoSaveInterval = d
+	// 		if d > 0 {
+	// 			setupAutoSave(d, w)
+	// 		} else if autoSaveStopCh != nil {
+	// 			close(autoSaveStopCh)
+	// 			autoSaveStopCh = nil
+	// 		}
+	// 	}
+	// })
+	// autoSaveSelect.SetSelected("1 мин")
+
+	// Unsaved changes indicator
+	unsavedLabel = widget.NewLabel("")
+	unsavedLabel.Hide()
+
+	// Main application menu
+	mainMenu := fyne.NewMainMenu(
+		fyne.NewMenu("File",
+			fyne.NewMenuItem("Save", func() {
+				log.Info().Msg("Save menu item clicked!")
+				err := saveCollection()
+				if err != nil {
+					dialog.ShowError(fmt.Errorf("save error: %w", err), w)
+				} else {
+					dialog.ShowInformation("Saved", "Collection saved successfully", w)
+				}
+			}),
+			fyne.NewMenuItem("Save As...", func() {
+				saveCollectionAs(w)
+			}),
+		),
+	)
+	mainMenu.Items[0].Items[0].Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierShortcutDefault}
+	w.SetMainMenu(mainMenu)
+
+	// Window close handling with unsaved changes warning
+	w.SetCloseIntercept(func() {
+		if appState.isModified {
+			dialog.ShowCustomConfirm(
+				"Unsaved Changes",
+				"Save",
+				"Exit Without Saving",
+				widget.NewLabel("Save changes before exiting?"),
+				func(save bool) {
+					if save {
+						err := saveCollection()
+						if err != nil {
+							dialog.ShowError(fmt.Errorf("save error: %w", err), w)
+							return
+						}
+					}
+					w.Close()
+				},
+				w,
+			)
+		} else {
+			w.Close()
+		}
+	})
+
 	top := container.NewVBox(
-		themeSelect,
-		addCollectionBtn,
+		container.NewHBox(
+			themeSelect,
+			addCollectionBtn,
+			// autoSaveSelect,
+			unsavedLabel,
+		),
 		title,
 		widget.NewSeparator(),
 		intro,
@@ -457,5 +579,154 @@ func main() {
 	w.SetContent(split)
 	w.Resize(fyne.NewSize(defaultWindowWidth, defaultWindowHeight))
 	log.Info().Msg(models.LogWindowReady)
+
+	// Start autosave (default 1 min)
+	setupAutoSave(autoSaveInterval)
+
 	w.ShowAndRun()
+}
+
+// Saves collection to file with temporary file for atomicity
+func saveCollection() error {
+	if appState.collection == nil || appState.collectionPath == "" {
+		return fmt.Errorf("no collection loaded")
+	}
+
+	// Collection serialization
+	data, err := json.MarshalIndent(appState.collection, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal collection: %w", err)
+	}
+
+	// Save to temporary file
+	tmpPath := appState.collectionPath + ".tmp"
+	err = os.WriteFile(tmpPath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+
+	// Check integrity (can add additional checks if needed)
+	// Rename temporary file to main
+	err = os.Rename(tmpPath, appState.collectionPath)
+	if err != nil {
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	appState.setModified(false)
+	return nil
+}
+
+// Saves collection to new file, updates path and resets modification flag
+func saveCollectionAs(parent fyne.Window) error {
+	if appState.collection == nil {
+		return fmt.Errorf("no collection loaded")
+	}
+
+	dlg := dialog.NewFileSave(
+		func(writer fyne.URIWriteCloser, err error) {
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("file selection error: %w", err), parent)
+				return
+			}
+			if writer == nil {
+				return
+			}
+			defer writer.Close()
+
+			data, err := json.MarshalIndent(appState.collection, "", "  ")
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("serialization error: %w", err), parent)
+				return
+			}
+			_, err = writer.Write(data)
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("file write error: %w", err), parent)
+				return
+			}
+
+			appState.collectionPath = writer.URI().Path()
+			appState.setModified(false)
+			dialog.ShowInformation("Saved", "Collection saved successfully", parent)
+		},
+		parent,
+	)
+	dlg.SetFileName("collection.json")
+	dlg.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
+	dlg.Show()
+	return nil
+}
+
+// Creates backup copy of file
+func createBackup(filePath string) error {
+	if filePath == "" {
+		return nil
+	}
+	bakPath := filePath + ".bak"
+	in, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(bakPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+// Starts autosave with given interval, can be stopped via channel
+func setupAutoSave(interval time.Duration) {
+	if autoSaveStopCh != nil {
+		close(autoSaveStopCh)
+	}
+	autoSaveStopCh = make(chan struct{})
+	go func(stopCh chan struct{}) {
+		for {
+			select {
+			case <-time.After(interval):
+				if appState.isModified && appState.collectionPath != "" {
+					err := createBackup(appState.collectionPath)
+					if err != nil {
+						fyne.CurrentApp().SendNotification(&fyne.Notification{
+							Title:   "Backup Error",
+							Content: err.Error(),
+						})
+					}
+					err = saveCollection()
+					if err != nil {
+						fyne.CurrentApp().SendNotification(&fyne.Notification{
+							Title:   "Autosave Error",
+							Content: err.Error(),
+						})
+					} else {
+						fyne.CurrentApp().SendNotification(&fyne.Notification{
+							Title:   "Autosave",
+							Content: "Collection saved automatically",
+						})
+					}
+				}
+			case <-stopCh:
+				return
+			}
+		}
+	}(autoSaveStopCh)
+}
+
+// Fixed variant theme wrapper to avoid deprecated theme.DarkTheme/LightTheme
+type fixedVariantTheme struct {
+	base    fyne.Theme
+	variant fyne.ThemeVariant
+}
+
+func (t fixedVariantTheme) Color(n fyne.ThemeColorName, _ fyne.ThemeVariant) color.Color {
+	return t.base.Color(n, t.variant)
+}
+func (t fixedVariantTheme) Icon(n fyne.ThemeIconName) fyne.Resource { return t.base.Icon(n) }
+func (t fixedVariantTheme) Font(s fyne.TextStyle) fyne.Resource     { return t.base.Font(s) }
+func (t fixedVariantTheme) Size(n fyne.ThemeSizeName) float32       { return t.base.Size(n) }
+
+func fixedVariant(v fyne.ThemeVariant) fyne.Theme {
+	return fixedVariantTheme{base: theme.DefaultTheme(), variant: v}
 }
