@@ -28,11 +28,12 @@ import (
 )
 
 const (
-	preferenceCurrentForm    = "currentForm"
-	preferenceCollectionPath = "collectionPath"
-	minURLPathLength         = 2
-	defaultWindowWidth       = 1024
-	defaultWindowHeight      = 768
+	preferenceCurrentForm     = "currentForm"
+	preferenceCollectionPath  = "collectionPath"
+	preferenceConfirmDeletion = "confirmDeletion"
+	minURLPathLength          = 2
+	defaultWindowWidth        = 1024
+	defaultWindowHeight       = 768
 
 	logLevel      = zerolog.WarnLevel
 	logFormatJSON = true
@@ -328,6 +329,8 @@ func main() {
 	var filteredForms []models.Form
 	var tree *widget.Tree
 	var filterEntry *widget.Entry
+	var selectedID string
+	var confirmDeletion bool
 
 	content := container.NewStack()
 	title := widget.NewLabel("Form Title")
@@ -357,6 +360,61 @@ func main() {
 	filteredForms = make([]models.Form, len(forms))
 	copy(filteredForms, forms)
 
+	// helper: find form index by ID in slice
+	findFormIndexByID := func(list []models.Form, id string) int {
+		for i := range list {
+			if list[i].ID == id {
+				return i
+			}
+		}
+		return -1
+	}
+
+	// helper: find collection item index by ID derived from URL.Path[1]
+	findCollectionIndexByID := func(id string) int {
+		if appState.collection == nil {
+			return -1
+		}
+		for i := range appState.collection.Item {
+			item := appState.collection.Item[i]
+			if len(item.Request.URL.Path) >= minURLPathLength {
+				if item.Request.URL.Path[1] == id {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+
+	// helper: remove form at index
+	removeFormAt := func(list []models.Form, idx int) []models.Form {
+		if idx < 0 || idx >= len(list) {
+			return list
+		}
+		return append(list[:idx], list[idx+1:]...)
+	}
+
+	// helper: remove collection item at index
+	removeCollectionItemAt := func(idx int) {
+		if appState.collection == nil {
+			return
+		}
+		if idx < 0 || idx >= len(appState.collection.Item) {
+			return
+		}
+		appState.collection.Item = append(appState.collection.Item[:idx], appState.collection.Item[idx+1:]...)
+	}
+
+	// helper: clear selection and content
+	clearSelection := func() {
+		content.Objects = []fyne.CanvasObject{}
+		content.Refresh()
+		title.SetText("")
+		intro.SetText("")
+		selectedID = ""
+		a.Preferences().SetString(preferenceCurrentForm, "")
+	}
+
 	tree = &widget.Tree{
 		ChildUIDs: func(uid string) []string {
 			if uid == "" {
@@ -376,20 +434,103 @@ func main() {
 		},
 		CreateNode: func(branch bool) fyne.CanvasObject {
 			log.Debug().Bool("branch", branch).Msg(models.LogTreeCreateNode)
-			return widget.NewLabel(models.LabelForm)
+			if branch {
+				return widget.NewLabel(models.LabelForms)
+			}
+			nameLabel := widget.NewLabel(models.LabelForm)
+			delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {})
+			delBtn.Importance = widget.LowImportance
+			h := container.NewHBox(nameLabel, delBtn)
+			return h
 		},
 		UpdateNode: func(uid string, branch bool, obj fyne.CanvasObject) {
-			if uid == "" {
-				log.Debug().Msg(models.LogTreeUpdateNodeRoot)
-				obj.(*widget.Label).SetText(models.LabelForms)
+			if uid == "" || branch {
+				// root node
+				if lbl, ok := obj.(*widget.Label); ok {
+					log.Debug().Msg(models.LogTreeUpdateNodeRoot)
+					lbl.SetText(models.LabelForms)
+				}
 				return
 			}
+			// leaf node container with label + delete button
+			cont, ok := obj.(*fyne.Container)
+			if !ok || len(cont.Objects) < 2 {
+				return
+			}
+			nameLabel, ok := cont.Objects[0].(*widget.Label)
+			if !ok {
+				return
+			}
+			delBtn, ok := cont.Objects[1].(*widget.Button)
+			if !ok {
+				return
+			}
+			// update label text
 			for _, f := range filteredForms {
 				if f.ID == uid {
 					log.Debug().Str("uid", uid).Str("title", f.Title).Msg(models.LogTreeUpdateNode)
-					obj.(*widget.Label).SetText(f.Title)
+					nameLabel.SetText(f.Title)
 					break
 				}
+			}
+			// bind delete handler (with optional confirm)
+			delBtn.OnTapped = func() {
+				doDelete := func() {
+					log.Info().Str("uid", uid).Msg(models.LogDeleteClick)
+					// remove from collection
+					ci := findCollectionIndexByID(uid)
+					fiAll := findFormIndexByID(forms, uid)
+					fiFiltered := findFormIndexByID(filteredForms, uid)
+					log.Debug().Int("ci", ci).Int("fi_all", fiAll).Int("fi_filtered", fiFiltered).Msg(models.LogDeleteIndexes)
+					// decide next selection before removal
+					var nextID string
+					if fiFiltered >= 0 && len(filteredForms) > 1 {
+						if fiFiltered < len(filteredForms)-1 {
+							nextID = filteredForms[fiFiltered+1].ID
+						} else if fiFiltered-1 >= 0 {
+							nextID = filteredForms[fiFiltered-1].ID
+						}
+					}
+
+					if ci >= 0 {
+						removeCollectionItemAt(ci)
+					}
+					if fiAll >= 0 {
+						forms = removeFormAt(forms, fiAll)
+					}
+					if fiFiltered >= 0 {
+						filteredForms = removeFormAt(filteredForms, fiFiltered)
+					}
+					log.Debug().Int("forms_len", len(forms)).Int("filtered_len", len(filteredForms)).Msg(models.LogAfterDeleteCounts)
+
+					// mark modified
+					appState.setModified(true)
+
+					// adjust selection if needed
+					if selectedID == uid {
+						if nextID != "" {
+							selectedID = nextID
+							a.Preferences().SetString(preferenceCurrentForm, nextID)
+							tree.Select(nextID)
+						} else {
+							clearSelection()
+						}
+					}
+
+					// refresh tree
+					tree.Refresh()
+					log.Info().Str("uid", uid).Msg(models.LogDeleteDone)
+				}
+
+				if confirmDeletion {
+					dialog.ShowConfirm("Delete", fmt.Sprintf("Delete '%s'?", nameLabel.Text), func(ok bool) {
+						if ok {
+							doDelete()
+						}
+					}, w)
+					return
+				}
+				doDelete()
 			}
 		},
 		OnSelected: func(uid string) {
@@ -397,6 +538,7 @@ func main() {
 				if f.ID == uid {
 					log.Info().Str("uid", uid).Str("form", f.Title).Msg(models.LogTreeSelected)
 					a.Preferences().SetString(preferenceCurrentForm, uid)
+					selectedID = uid
 					setForm(f.Form, f.Title, f.Intro)
 					break
 				}
@@ -485,6 +627,14 @@ func main() {
 	unsavedLabel = widget.NewLabel("")
 	unsavedLabel.Hide()
 
+	// Confirm deletion checkbox
+	confirmDeletion = a.Preferences().Bool(preferenceConfirmDeletion)
+	confirmChk := widget.NewCheck("Confirm Delete", func(b bool) {
+		confirmDeletion = b
+		a.Preferences().SetBool(preferenceConfirmDeletion, b)
+	})
+	confirmChk.SetChecked(confirmDeletion)
+
 	// Main application menu
 	mainMenu := fyne.NewMainMenu(
 		fyne.NewMenu("File",
@@ -534,6 +684,7 @@ func main() {
 		container.NewHBox(
 			themeSelect,
 			addCollectionBtn,
+			confirmChk,
 			// autoSaveSelect,
 			unsavedLabel,
 		),
