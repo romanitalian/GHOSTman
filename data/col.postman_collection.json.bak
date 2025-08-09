@@ -1,0 +1,100 @@
+{
+  "info": {
+    "name": "Form Demo API"
+  },
+  "item": [
+    {
+      "name": "Weather in my location",
+      "request": {
+        "method": "GET",
+        "description": "Get weather in my location",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"name\": \"John Smith\",\n    \"email\": \"john.smith@example.com\",\n    \"password\": \"secret123\"\n}"
+        },
+        "url": {
+          "raw": "https://wttr.in?format=1",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "form1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Users list",
+      "request": {
+        "method": "GET",
+        "description": "Get users list",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        },
+        "url": {
+          "raw": "{{base_url_users}}/users",
+          "host": [
+            "{{base_url_users}}"
+          ],
+          "path": [
+            "api",
+            "form2"
+          ]
+        }
+      }
+    },
+    {
+      "name": "User by ID: 1",
+      "request": {
+        "method": "GET",
+        "description": "Get user by ID: 1",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        },
+        "url": {
+          "raw": "{{base_url_users}}/users/1",
+          "host": [
+            "{{base_url_users}}"
+          ],
+          "path": [
+            "api",
+            "form3"
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://wttr.in",
+      "type": "string"
+    },
+    {
+      "key": "base_url_users",
+      "value": "https://jsonplaceholder.typicode.com",
+      "type": "string"
+    }
+  ]
+}

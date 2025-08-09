@@ -32,6 +32,7 @@ const (
 	ErrReadingResponse   = "Error reading response: %v"
 	ErrRequestCancelled  = "Запрос отменен"
 	ErrRequestInProgress = "Запрос выполняется %s 🚀"
+	ErrNoForms           = "No forms found in collection"
 )
 
 // Log messages
@@ -55,4 +56,8 @@ const (
 	LogTreeUpdateNode     = "Tree UpdateNode called"
 	LogTreeUpdateNodeRoot = "Tree UpdateNode called for root"
 	LogTreeSelected       = "Tree OnSelected called"
+	LogDeleteClick        = "Delete icon clicked"
+	LogDeleteIndexes      = "Deletion indexes computed"
+	LogDeleteDone         = "Deletion performed"
+	LogAfterDeleteCounts  = "Counts after deletion"
 )

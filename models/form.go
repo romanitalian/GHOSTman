@@ -1,6 +1,8 @@
 package models
 
-import "fyne.io/fyne/v2"
+import (
+	"fyne.io/fyne/v2"
+)
 
 // Form represents a form in the application
 type Form struct {

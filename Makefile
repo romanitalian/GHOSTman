@@ -3,7 +3,6 @@ APP_NAME := GHOSTman
 
 .PHONY: help
 help: ## Available commands
-	@clear
 	@echo "Available commands:"
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", 622821, 622822 } /^##@/ { printf "\n\033[0;33m%s\033[0m\n", substr(622820, 5) } ' 
 	@echo ""
