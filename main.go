@@ -31,6 +31,7 @@ const (
 	preferenceCurrentForm     = "currentForm"
 	preferenceCollectionPath  = "collectionPath"
 	preferenceConfirmDeletion = "confirmDeletion"
+	preferenceSaveOnDelete    = "saveOnDelete"
 	minURLPathLength          = 2
 	defaultWindowWidth        = 1024
 	defaultWindowHeight       = 768
@@ -331,8 +332,22 @@ func main() {
 	var filterEntry *widget.Entry
 	var selectedID string
 	var confirmDeletion bool
+	var saveOnDelete bool
+	var undoBtn *widget.Button
+
+	type deletedEntry struct {
+		id                 string
+		form               models.Form
+		item               models.Item
+		indexInForms       int
+		indexInCollection  int
+		previousSelectedID string
+		filterBefore       string
+	}
+	var lastDeleted *deletedEntry
 
 	content := container.NewStack()
+	emptyLabel := widget.NewLabel("No forms. Add collection.")
 	title := widget.NewLabel("Form Title")
 	intro := widget.NewLabel("Form description goes here")
 	intro.Wrapping = fyne.TextWrapWord
@@ -370,20 +385,26 @@ func main() {
 		return -1
 	}
 
-	// helper: find collection item index by ID derived from URL.Path[1]
-	findCollectionIndexByID := func(id string) int {
+	// removed: replaced by preferIndexByTitle
+
+	// helper: prefer collection index by matching title when multiple IDs match
+	preferIndexByTitle := func(id string, title string) int {
 		if appState.collection == nil {
 			return -1
 		}
+		candidate := -1
 		for i := range appState.collection.Item {
-			item := appState.collection.Item[i]
-			if len(item.Request.URL.Path) >= minURLPathLength {
-				if item.Request.URL.Path[1] == id {
+			it := appState.collection.Item[i]
+			if len(it.Request.URL.Path) >= minURLPathLength && it.Request.URL.Path[1] == id {
+				if candidate == -1 {
+					candidate = i
+				}
+				if it.Name == title {
 					return i
 				}
 			}
 		}
-		return -1
+		return candidate
 	}
 
 	// helper: remove form at index
@@ -407,7 +428,11 @@ func main() {
 
 	// helper: clear selection and content
 	clearSelection := func() {
-		content.Objects = []fyne.CanvasObject{}
+		if len(filteredForms) == 0 {
+			content.Objects = []fyne.CanvasObject{emptyLabel}
+		} else {
+			content.Objects = []fyne.CanvasObject{}
+		}
 		content.Refresh()
 		title.SetText("")
 		intro.SetText("")
@@ -477,8 +502,8 @@ func main() {
 			delBtn.OnTapped = func() {
 				doDelete := func() {
 					log.Info().Str("uid", uid).Msg(models.LogDeleteClick)
-					// remove from collection
-					ci := findCollectionIndexByID(uid)
+					// compute candidate index by matching title to avoid id collisions
+					ci := preferIndexByTitle(uid, nameLabel.Text)
 					fiAll := findFormIndexByID(forms, uid)
 					fiFiltered := findFormIndexByID(filteredForms, uid)
 					log.Debug().Int("ci", ci).Int("fi_all", fiAll).Int("fi_filtered", fiFiltered).Msg(models.LogDeleteIndexes)
@@ -489,6 +514,27 @@ func main() {
 							nextID = filteredForms[fiFiltered+1].ID
 						} else if fiFiltered-1 >= 0 {
 							nextID = filteredForms[fiFiltered-1].ID
+						}
+					}
+
+					// capture for undo
+					if ci >= 0 && fiAll >= 0 {
+						lastDeleted = &deletedEntry{
+							id:                 uid,
+							form:               forms[fiAll],
+							item:               appState.collection.Item[ci],
+							indexInForms:       fiAll,
+							indexInCollection:  ci,
+							previousSelectedID: selectedID,
+							filterBefore:       filterEntry.Text,
+						}
+						if undoBtn != nil {
+							undoBtn.Enable()
+						}
+					} else {
+						lastDeleted = nil
+						if undoBtn != nil {
+							undoBtn.Disable()
 						}
 					}
 
@@ -523,8 +569,27 @@ func main() {
 				}
 
 				if confirmDeletion {
-					dialog.ShowConfirm("Delete", fmt.Sprintf("Delete '%s'?", nameLabel.Text), func(ok bool) {
+					// show method and URL if available + don't ask again
+					method, urlRaw := "", ""
+					idx := preferIndexByTitle(uid, nameLabel.Text)
+					if idx >= 0 {
+						method = appState.collection.Item[idx].Request.Method
+						urlRaw = appState.collection.Item[idx].Request.URL.Raw
+					}
+					msg := fmt.Sprintf("Delete '%s' [%s %s]?", nameLabel.Text, method, urlRaw)
+					dontAskChk := widget.NewCheck("Don't ask again", nil)
+					content := container.NewVBox(
+						widget.NewLabel(msg),
+						dontAskChk,
+					)
+					dialog.ShowCustomConfirm("Delete", "Delete", "Cancel", content, func(ok bool) {
 						if ok {
+							if dontAskChk.Checked {
+								confirmDeletion = false
+								a.Preferences().SetBool(preferenceConfirmDeletion, false)
+								// update UI checkbox if present
+								// note: confirmChk is outside scope; user will see effect on next toggle
+							}
 							doDelete()
 						}
 					}, w)
@@ -635,6 +700,14 @@ func main() {
 	})
 	confirmChk.SetChecked(confirmDeletion)
 
+	// Save on delete checkbox
+	saveOnDelete = a.Preferences().Bool(preferenceSaveOnDelete)
+	saveOnDeleteChk := widget.NewCheck("Save on delete", func(b bool) {
+		saveOnDelete = b
+		a.Preferences().SetBool(preferenceSaveOnDelete, b)
+	})
+	saveOnDeleteChk.SetChecked(saveOnDelete)
+
 	// Main application menu
 	mainMenu := fyne.NewMainMenu(
 		fyne.NewMenu("File",
@@ -680,11 +753,51 @@ func main() {
 		}
 	})
 
+	// Undo delete button
+	undoBtn = widget.NewButton("Undo delete", func() {
+		if lastDeleted == nil || appState.collection == nil {
+			return
+		}
+		// restore collection item
+		if lastDeleted.indexInCollection < 0 || lastDeleted.indexInCollection > len(appState.collection.Item) {
+			return
+		}
+		// insert back into collection
+		idxC := lastDeleted.indexInCollection
+		appState.collection.Item = append(appState.collection.Item[:idxC], append([]models.Item{lastDeleted.item}, appState.collection.Item[idxC:]...)...)
+
+		// restore forms
+		if lastDeleted.indexInForms < 0 || lastDeleted.indexInForms > len(forms) {
+			return
+		}
+		idxF := lastDeleted.indexInForms
+		forms = append(forms[:idxF], append([]models.Form{lastDeleted.form}, forms[idxF:]...)...)
+
+		// rebuild filtered based on stored filter
+		if filterEntry != nil {
+			filterEntry.SetText(lastDeleted.filterBefore)
+		}
+		// selection
+		if lastDeleted.previousSelectedID != "" {
+			selectedID = lastDeleted.previousSelectedID
+			a.Preferences().SetString(preferenceCurrentForm, selectedID)
+			tree.Select(selectedID)
+		}
+
+		appState.setModified(true)
+		tree.Refresh()
+		lastDeleted = nil
+		undoBtn.Disable()
+	})
+	undoBtn.Disable()
+
 	top := container.NewVBox(
 		container.NewHBox(
 			themeSelect,
 			addCollectionBtn,
 			confirmChk,
+			saveOnDeleteChk,
+			undoBtn,
 			// autoSaveSelect,
 			unsavedLabel,
 		),
